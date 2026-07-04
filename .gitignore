@@ -1,0 +1,6 @@
+.direnv/
+__pycache__/
+*.pyc
+lib/
+dist/
+index.html
