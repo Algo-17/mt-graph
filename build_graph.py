@@ -620,9 +620,13 @@ html, body { margin: 0; padding: 0; overflow: hidden; height: 100%;
 (function() {
 
   // ── Delta formatting ─────────────────────────────────────────
-  function fmtDelta(secs) {
-    var m = Math.floor(secs / 60), s = Math.round(secs % 60);
-    return m + ":" + (s < 10 ? "0" : "") + s;
+  function fmtDelta(secs, signed) {
+    var neg = secs < 0;
+    var abs = Math.abs(secs);
+    var m = Math.floor(abs / 60), s = Math.round(abs % 60);
+    var str = m + ":" + (s < 10 ? "0" : "") + s;
+    if (signed && secs !== 0) str = (neg ? "−" : "+") + str;
+    return str;
   }
 
   // ── Info-panel element refs ──────────────────────────────────
@@ -739,9 +743,9 @@ html, body { margin: 0; padding: 0; overflow: hidden; height: 100%;
 
     vis.forEach(function(e) {
       var d = e.delta || 0;
-      if (e.to   === sel) { wins++;   ownDelta += d; matchEdges.push(e); }
-      if (e.from === sel) { losses++;               matchEdges.push(e); }
-      if (anc.has(e.from) && anc.has(e.to)) poolDelta += d;
+      if (e.to   === sel) { wins++;   ownDelta -= d; matchEdges.push(e); }
+      if (e.from === sel) { losses++; ownDelta += d; matchEdges.push(e); }
+      if (anc.has(e.from) && anc.has(e.to)) poolDelta -= d;
     });
 
     matchEdges.sort(function(a, b) { return (a.wave_index||0) - (b.wave_index||0); });
@@ -812,8 +816,8 @@ html, body { margin: 0; padding: 0; overflow: hidden; height: 100%;
     ipRec.textContent       = wins + "W – " + losses + "L";
     ipDepth.textContent     = dist[sel] || 0;
     ipBuch.textContent      = (anc.size - 1) + " player" + (anc.size !== 2 ? "s" : "");
-    ipOwnDelta.textContent  = fmtDelta(ownDelta);
-    ipPoolDelta.textContent = fmtDelta(poolDelta);
+    ipOwnDelta.textContent  = fmtDelta(ownDelta, true);
+    ipPoolDelta.textContent = fmtDelta(poolDelta, true);
     panel.style.display     = "block";
   }
 
