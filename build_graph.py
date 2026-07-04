@@ -1105,7 +1105,7 @@ html, body { margin: 0; padding: 0; overflow: hidden; height: 100%;
         weekSelect.value = initWeek;
         applyWeekFilter();
       }
-      pushHistoryState(initPlayer || null, _currentWeek, true);
+      pushHistoryState(initPlayer || null, initWeek || null, true);
       if (initPlayer && nodes.get(initPlayer)) selectPlayer(initPlayer);
     } finally {
       _restoringHistory = false;
