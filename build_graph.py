@@ -680,7 +680,7 @@ html, body { margin: 0; padding: 0; overflow: hidden; height: 100%;
   <div class="row"><span class="lbl">Pool Δ sum</span>    <span class="val" id="ip-pool-delta"></span></div>
   <div class="sec">Rank over time</div>
   <div id="ip-rank-timeline"></div>
-  <div class="sec">Matches (opp. rank at wave end)</div>
+  <div class="sec">Matches (opp. record through selected week)</div>
   <table class="match-table"><tbody id="ip-match-rows"></tbody></table>
 </div>
 
@@ -824,13 +824,14 @@ html, body { margin: 0; padding: 0; overflow: hidden; height: 100%;
       var d = e.delta || 0;
       var deltaStr = (isWin ? "−" : "+") + fmtDelta(d);
       var cls = isWin ? "match-row-w" : "match-row-l";
-      var waveStats = window._weekData && window._weekData.stats && window._weekData.stats[e.wave];
-      var oppRank = waveStats && waveStats[opp] ? "#" + waveStats[opp].rank : "—";
+      var curStats = window._weekData && window._weekData.stats && window._weekData.stats[_currentWeek];
+      var oppSt = curStats && curStats[opp];
+      var oppRec = oppSt ? oppSt.wins + "–" + oppSt.losses : "—";
       return '<tr class="' + cls + '">' +
         '<td class="mt-wave">'   + (e.wave || "?")    + '</td>' +
         '<td class="mt-result">' + (isWin ? "W" : "L") + '</td>' +
         '<td class="mt-opp"><span class="opp-link" data-player="' + opp + '">' + opp + '</span></td>' +
-        '<td class="mt-rank">'   + oppRank             + '</td>' +
+        '<td class="mt-rank">'   + oppRec              + '</td>' +
         '<td class="mt-delta">'  + deltaStr            + '</td>' +
         '</tr>';
     }).join("");
