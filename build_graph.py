@@ -589,7 +589,74 @@ html, body { margin: 0; padding: 0; overflow: hidden; height: 100%;
 .match-row-l .mt-result { color: #cc4444; }
 .match-row-w .mt-delta  { color: #44cc44; }
 .match-row-l .mt-delta  { color: #cc4444; }
+/* ── Hamburger / drawer overlay ─────────────────────────────── */
+#hamburger {
+  display: none;
+  position: fixed;
+  top: 10px; left: 10px;
+  z-index: 40;
+  width: 44px; height: 44px;
+  background: rgba(12, 12, 28, 0.9);
+  border: 1px solid #2a2a4a;
+  border-radius: 6px;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #c0c0e0;
+  font-size: 20px;
+}
+#side-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 25;
+}
+/* ── Info-panel close button ─────────────────────────────────── */
+#ip-close {
+  display: none;
+  position: absolute;
+  top: 10px; right: 14px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #8888aa;
+  font-size: 20px;
+  line-height: 1;
+  padding: 4px;
+}
+#ip-close:hover { color: #e0e0f0; }
+/* ── Mobile layout ───────────────────────────────────────────── */
+@media (max-width: 640px) {
+  #mynetwork { left: 0 !important; }
+  #side-panel {
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    z-index: 30;
+    width: min(280px, 85vw);
+  }
+  #side-panel.open   { transform: translateX(0); }
+  #side-overlay.open { display: block; }
+  #hamburger         { display: flex; }
+  .side-item         { padding: 10px 10px 10px 8px; }
+  #info-panel {
+    top: auto !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    border-radius: 12px 12px 0 0;
+    max-height: 65vh;
+    overflow-y: auto;
+    padding: 14px 16px max(24px, env(safe-area-inset-bottom));
+  }
+  #ip-close { display: block; }
+}
 </style>
+
+<button id="hamburger">&#9776;</button>
+<div id="side-overlay"></div>
 
 <!-- Left sidebar -->
 <div id="side-panel">
@@ -604,6 +671,7 @@ html, body { margin: 0; padding: 0; overflow: hidden; height: 100%;
 
 <!-- Top-right selection panel -->
 <div id="info-panel">
+  <button id="ip-close">&#x2715;</button>
   <h2 id="ip-name"></h2>
   <div class="row"><span class="lbl">Record</span>        <span class="val" id="ip-record"></span></div>
   <div class="row"><span class="lbl">Ancestry depth</span><span class="val" id="ip-depth"></span></div>
@@ -966,6 +1034,7 @@ html, body { margin: 0; padding: 0; overflow: hidden; height: 100%;
     applyAncestorHighlight(_sel, _anc);
     showPanel(_sel, _anc);
     setSideActive(nodeId);
+    closeSidebarOnMobile();
     if (!_restoringHistory) pushHistoryState(nodeId, _currentWeek);
   }
 
@@ -1028,6 +1097,29 @@ html, body { margin: 0; padding: 0; overflow: hidden; height: 100%;
   var sidePanel  = document.getElementById("side-panel");
   var sideItems  = {};
   var _sideHover = null;
+
+  // Mobile drawer
+  var hamburger   = document.getElementById("hamburger");
+  var sideOverlay = document.getElementById("side-overlay");
+  hamburger.addEventListener("click", function () {
+    sidePanel.classList.toggle("open");
+    sideOverlay.classList.toggle("open");
+  });
+  sideOverlay.addEventListener("click", function () {
+    sidePanel.classList.remove("open");
+    sideOverlay.classList.remove("open");
+  });
+  function closeSidebarOnMobile() {
+    if (window.innerWidth <= 640) {
+      sidePanel.classList.remove("open");
+      sideOverlay.classList.remove("open");
+    }
+  }
+
+  // Info-panel close button
+  document.getElementById("ip-close").addEventListener("click", function () {
+    deselectAll();
+  });
 
   var _orderMap    = {};
   var _playerStats = {};
@@ -1128,6 +1220,11 @@ def _inject_ancestor_highlight(output_path: str, player_order: list[str], week_d
     data_js = (
         f'<script>window._playerOrder={json.dumps(player_order)};'
         f'window._weekData={json.dumps(week_data)};</script>\n'
+    )
+    html = html.replace(
+        "</head>",
+        '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n</head>',
+        1,
     )
     html = html.replace("</body>", data_js + _ANCESTOR_JS + "\n</body>", 1)
     with open(output_path, "w", encoding="utf-8") as f:
