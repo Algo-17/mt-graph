@@ -40,6 +40,19 @@ CAP_FINISH  =  900   # 15 min — loser finished
 CAP_FORFEIT = 1800   # 30 min — loser forfeited (FF)
 
 
+import re
+
+_SUB_PATTERN = re.compile(r'^(.+?)\s*\(([^)]+)\)\s*$')
+
+
+def _parse_sub_name(raw: str) -> tuple[str, str | None]:
+    """Return (primary_name, sub_name) when raw is 'X (Y)', else (raw, None)."""
+    m = _SUB_PATTERN.match(raw.strip())
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+    return raw.strip(), None
+
+
 def _to_seconds(t) -> float | None:
     """Return a time cell value as seconds, or None for FF / missing."""
     if isinstance(t, datetime.timedelta):
@@ -90,7 +103,8 @@ def load_player_order(path: str, canonical_names: set[str]) -> list[dict]:
         raw = row[3]
         if not (raw and str(raw).strip()):
             continue
-        canon = name_map.get(str(raw).strip().lower())
+        primary, _ = _parse_sub_name(str(raw))
+        canon = name_map.get(primary.lower())
         if canon and canon not in seen:
             seen.add(canon)
             mb  = row[8]
@@ -114,11 +128,12 @@ def load_matches(path: str) -> list[tuple[str, str, str, int]]:
     # The first-seen capitalization wins.
     canonical: dict[str, str] = {}
 
-    def canonicalize(name: str) -> str:
-        key = name.strip().lower()
+    def canonicalize(raw: str) -> tuple[str, str | None]:
+        primary, sub = _parse_sub_name(raw)
+        key = primary.lower()
         if key not in canonical:
-            canonical[key] = name.strip()
-        return canonical[key]
+            canonical[key] = primary
+        return canonical[key], sub
 
     matches = []
     for sheet_name in WAVE_SHEETS:
@@ -135,14 +150,20 @@ def load_matches(path: str) -> list[tuple[str, str, str, int]]:
                 row[COL_WINNER], row[COL_PLAYED],
             )
             if p1 and p2 and winner and played:
-                p1 = canonicalize(str(p1))
-                p2 = canonicalize(str(p2))
-                winner = canonicalize(str(winner))
+                p1, p1_sub = canonicalize(str(p1))
+                p2, p2_sub = canonicalize(str(p2))
+                winner, winner_sub = canonicalize(str(winner))
                 loser = p2 if winner == p1 else p1
+                loser_sub = p2_sub if winner == p1 else p1_sub
+                sub_info = {}
+                if winner_sub:
+                    sub_info["winner_sub"] = winner_sub
+                if loser_sub:
+                    sub_info["loser_sub"] = loser_sub
                 winner_time = p1t if winner == p1 else p2t
                 loser_time  = p2t if winner == p1 else p1t
                 delta = _capped_delta(winner_time, loser_time)
-                matches.append((sheet_name, winner, loser, delta))
+                matches.append((sheet_name, winner, loser, delta, sub_info or None))
     return matches
 
 
@@ -153,7 +174,10 @@ def build_graph(matches: list[tuple[str, str, str, int]]) -> nx.DiGraph:
     Edge delta is the sum of capped tiebreaker time margins (seconds).
     """
     G = nx.DiGraph()
-    for _wave, winner, loser, delta in matches:
+    for match in matches:
+        _wave, winner, loser, delta = match[0], match[1], match[2], match[3]
+        sub_info = match[4] if len(match) > 4 else None
+        sub_for = sub_info.get("winner_sub") if sub_info else None
         ws = WAVE_SHORT[_wave]
         wi = WAVE_SHEETS.index(_wave)
         if G.has_edge(loser, winner):
@@ -169,6 +193,7 @@ def build_graph(matches: list[tuple[str, str, str, int]]) -> nx.DiGraph:
                 wave=ws,
                 wave_index=wi,
                 title=f"[{ws}] {winner} beat {loser}  (+{_fmt_delta(delta)})",
+                sub_for=sub_for,
             )
     return G
 
@@ -179,11 +204,17 @@ def _stats_from_matches(filtered: list[tuple], all_players: set[str]) -> dict[st
     wins: dict[str, int] = defaultdict(int)
     losses: dict[str, int] = defaultdict(int)
     delta_net: dict[str, int] = defaultdict(int)
-    for _wave, winner, loser, delta in filtered:
-        wins[winner] += 1
-        losses[loser] += 1
-        delta_net[winner] -= delta
-        delta_net[loser]  += delta
+    for match in filtered:
+        _wave, winner, loser, delta = match[0], match[1], match[2], match[3]
+        sub_info = match[4] if len(match) > 4 else None
+        winner_is_sub = sub_info and "winner_sub" in sub_info
+        loser_is_sub  = sub_info and "loser_sub"  in sub_info
+        if not winner_is_sub:
+            wins[winner] += 1
+            delta_net[winner] -= delta
+        if not loser_is_sub:
+            losses[loser] += 1
+            delta_net[loser] += delta
     result = {}
     for player in all_players:
         dn = delta_net[player]
@@ -202,10 +233,11 @@ def load_scheduled_matchups(path: str) -> dict[str, dict[str, str]]:
     """Return {player: {wave_short: opponent}} for every scheduled matchup (played or not)."""
     canonical: dict[str, str] = {}
 
-    def canon(name: str) -> str:
-        key = name.strip().lower()
+    def canon(raw: str) -> str:
+        primary, _ = _parse_sub_name(raw)
+        key = primary.lower()
         if key not in canonical:
-            canonical[key] = name.strip()
+            canonical[key] = primary
         return canonical[key]
 
     wb = openpyxl.load_workbook(path, data_only=True)
@@ -241,8 +273,8 @@ def _dt_to_secs(dt_str: str) -> int:
 def compute_week_stats(matches: list[tuple], scheduled_matchups: dict[str, dict[str, str]]) -> dict:
     """Return {weeks, stats, order} where stats and order are keyed by week label."""
     from collections import defaultdict
-    all_players = {p for _, w, l, _ in matches for p in (w, l)}
-    wave_set = {w for w, _, _, _ in matches}
+    all_players = {p for m in matches for p in (m[1], m[2])}
+    wave_set = {m[0] for m in matches}
     available = [WAVE_SHORT[s] for s in WAVE_SHEETS if s in wave_set]
     wave_short_keys = list(WAVE_SHORT.values())  # all 6 round keys in order
 
@@ -251,7 +283,7 @@ def compute_week_stats(matches: list[tuple], scheduled_matchups: dict[str, dict[
     for wk in available:
         idx = int(wk[1:]) - 1
         cutoff = set(WAVE_SHEETS[: idx + 1])
-        filtered_map[wk] = [(w, win, los, d) for w, win, los, d in matches if w in cutoff]
+        filtered_map[wk] = [m for m in matches if m[0] in cutoff]
 
     stats: dict[str, dict] = {}
     for wk_label, filtered in filtered_map.items():
@@ -263,8 +295,10 @@ def compute_week_stats(matches: list[tuple], scheduled_matchups: dict[str, dict[
         wk_num = int(wk_label[1:])  # e.g. "W3" → 3
         filtered = filtered_map[wk_label]
         week_wins: dict[str, int] = defaultdict(int)
-        for _, winner, loser, _ in filtered:
-            week_wins[winner] += 1
+        for match in filtered:
+            sub_info = match[4] if len(match) > 4 else None
+            if not (sub_info and "winner_sub" in sub_info):
+                week_wins[match[1]] += 1
         for player in wk_stats:
             r_scores = []
             for i, ws_key in enumerate(wave_short_keys):
@@ -290,8 +324,11 @@ def compute_week_stats(matches: list[tuple], scheduled_matchups: dict[str, dict[
         for bucket in buckets.values():
             if len(bucket) > 1:
                 bucket_set = set(bucket)
-                for _, winner, loser, _ in filtered:
-                    if winner in bucket_set and loser in bucket_set:
+                for match in filtered:
+                    winner, loser = match[1], match[2]
+                    sub_info = match[4] if len(match) > 4 else None
+                    winner_is_sub = sub_info and "winner_sub" in sub_info
+                    if not winner_is_sub and winner in bucket_set and loser in bucket_set:
                         h2h[winner] += 1
 
         ranked = sorted(
@@ -315,7 +352,7 @@ def node_stats(G: nx.DiGraph) -> dict[str, dict]:
     """Compute per-node stats: wins (in-degree), losses (out-degree)."""
     stats = {}
     for node in G.nodes():
-        wins = G.in_degree(node)
+        wins = sum(1 for _, _, d in G.in_edges(node, data=True) if not d.get("sub_for"))
         losses = G.out_degree(node)
         stats[node] = {"wins": wins, "losses": losses}
     return stats
@@ -390,6 +427,7 @@ def build_visualization(G: nx.DiGraph, output_path: str, player_order: list[str]
             delta=delta,
             wave=data.get("wave", ""),
             wave_index=data.get("wave_index", 0),
+            sub_for=data.get("sub_for"),
             color={"color": "#aaaaaa", "highlight": "#ffffff"},
             arrows="to",
         )
@@ -589,6 +627,10 @@ html, body { margin: 0; padding: 0; overflow: hidden; height: 100%;
 .match-row-l .mt-result { color: #cc4444; }
 .match-row-w .mt-delta  { color: #44cc44; }
 .match-row-l .mt-delta  { color: #cc4444; }
+.match-row-sub .mt-result { color: #888888; }
+.match-row-sub .mt-delta  { color: #666666; }
+.match-row-sub td         { opacity: 0.65; }
+.match-row-sub-note td    { font-size: 11px; color: #888888; font-style: italic; padding: 0 4px 5px; }
 /* ── Hamburger / drawer overlay ─────────────────────────────── */
 #hamburger {
   display: none;
@@ -811,8 +853,12 @@ html, body { margin: 0; padding: 0; overflow: hidden; height: 100%;
 
     vis.forEach(function(e) {
       var d = e.delta || 0;
-      if (e.to   === sel) { wins++;   ownDelta -= d; matchEdges.push(e); }
-      if (e.from === sel) { losses++; ownDelta += d; matchEdges.push(e); }
+      if (e.to === sel) {
+        matchEdges.push(e);
+        if (!e.sub_for) { wins++; ownDelta -= d; }
+      } else if (e.from === sel) {
+        losses++; ownDelta += d; matchEdges.push(e);
+      }
       if (anc.has(e.from) && anc.has(e.to)) poolDelta -= d;
     });
 
@@ -820,20 +866,29 @@ html, body { margin: 0; padding: 0; overflow: hidden; height: 100%;
 
     var rows = matchEdges.map(function(e) {
       var isWin = e.to === sel;
+      var isWinnerSub = isWin  && !!e.sub_for;
+      var isLoserSub  = !isWin && !!e.sub_for;
       var opp = isWin ? e.from : e.to;
       var d = e.delta || 0;
       var deltaStr = (isWin ? "−" : "+") + fmtDelta(d);
-      var cls = isWin ? "match-row-w" : "match-row-l";
+      var cls = isWinnerSub ? "match-row-sub" : (isWin ? "match-row-w" : "match-row-l");
       var curStats = window._weekData && window._weekData.stats && window._weekData.stats[_currentWeek];
       var oppSt = curStats && curStats[opp];
       var oppRec = oppSt ? oppSt.wins + "–" + oppSt.losses : "—";
-      return '<tr class="' + cls + '">' +
-        '<td class="mt-wave">'   + (e.wave || "?")    + '</td>' +
-        '<td class="mt-result">' + (isWin ? "W" : "L") + '</td>' +
+      var resultLabel = isWinnerSub ? "W*" : (isWin ? "W" : "L");
+      var row = '<tr class="' + cls + '">' +
+        '<td class="mt-wave">'   + (e.wave || "?") + '</td>' +
+        '<td class="mt-result">' + resultLabel      + '</td>' +
         '<td class="mt-opp"><span class="opp-link" data-player="' + opp + '">' + opp + '</span></td>' +
-        '<td class="mt-rank">'   + oppRec              + '</td>' +
-        '<td class="mt-delta">'  + deltaStr            + '</td>' +
+        '<td class="mt-rank">'   + oppRec           + '</td>' +
+        '<td class="mt-delta">'  + deltaStr         + '</td>' +
         '</tr>';
+      if (isWinnerSub) {
+        row += '<tr class="match-row-sub-note"><td colspan="5">* played by ' + e.sub_for + '; did not count toward record</td></tr>';
+      } else if (isLoserSub) {
+        row += '<tr class="match-row-sub-note"><td colspan="5">* ' + opp + ' was subbed by ' + e.sub_for + '</td></tr>';
+      }
+      return row;
     }).join("");
 
     ipMatchRows.innerHTML = rows ||
