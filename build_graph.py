@@ -840,11 +840,15 @@ html, body { margin: 0; padding: 0; overflow: hidden; height: 100%;
       '<tr><td colspan="5" style="color:#555577;padding:4px 0">No matches</td></tr>';
 
     // Longest path to sel within ancestor subgraph.
+    // Cap at anc.size iterations: longest simple path in N nodes is ≤ N−1.
+    // Without the cap, a cycle in the subgraph causes an infinite loop.
     var dist = {};
     anc.forEach(function(depth, n) { dist[n] = 0; });
     var changed = true;
-    while (changed) {
+    var iters = 0, maxIters = anc.size;
+    while (changed && iters < maxIters) {
       changed = false;
+      iters++;
       vis.forEach(function(e) {
         if (anc.has(e.from) && anc.has(e.to)) {
           var d = (dist[e.from] || 0) + 1;
