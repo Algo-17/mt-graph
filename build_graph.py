@@ -43,14 +43,26 @@ CAP_FORFEIT = 1800   # 30 min — loser forfeited (FF)
 import re
 
 _SUB_PATTERN = re.compile(r'^(.+?)\s*\(([^)]+)\)\s*$')
+_BARE_SUB_PATTERN = re.compile(r'^\(([^)]+)\)$')
 
 
 def _parse_sub_name(raw: str) -> tuple[str, str | None]:
-    """Return (primary_name, sub_name) when raw is 'X (Y)', else (raw, None)."""
-    m = _SUB_PATTERN.match(raw.strip())
+    """Return (primary_name, sub_name).
+
+    'X (Y)' -> X is the primary player, Y is a stand-in who played in X's place.
+    '(Y)' (no primary before the parens) -> Y filled an open slot left by an
+    uneven number of remaining players; treated as its own primary with itself
+    as the sub, so the win still doesn't count twice toward Y's own record.
+    """
+    s = raw.strip()
+    m = _BARE_SUB_PATTERN.match(s)
+    if m:
+        name = m.group(1).strip()
+        return name, name
+    m = _SUB_PATTERN.match(s)
     if m:
         return m.group(1).strip(), m.group(2).strip()
-    return raw.strip(), None
+    return s, None
 
 
 def _to_seconds(t) -> float | None:
@@ -883,8 +895,13 @@ html, body { margin: 0; padding: 0; overflow: hidden; height: 100%;
         '<td class="mt-rank">'   + oppRec           + '</td>' +
         '<td class="mt-delta">'  + deltaStr         + '</td>' +
         '</tr>';
-      if (isWinnerSub) {
+      var isSelfFill = e.sub_for && opp.toLowerCase() === String(e.sub_for).toLowerCase();
+      if (isWinnerSub && isSelfFill) {
+        row += '<tr class="match-row-sub-note"><td colspan="5">* filled an open slot; did not count toward record</td></tr>';
+      } else if (isWinnerSub) {
         row += '<tr class="match-row-sub-note"><td colspan="5">* played by ' + e.sub_for + '; did not count toward record</td></tr>';
+      } else if (isLoserSub && isSelfFill) {
+        row += '<tr class="match-row-sub-note"><td colspan="5">* ' + opp + ' filled an open slot this round</td></tr>';
       } else if (isLoserSub) {
         row += '<tr class="match-row-sub-note"><td colspan="5">* ' + opp + ' was subbed by ' + e.sub_for + '</td></tr>';
       }
